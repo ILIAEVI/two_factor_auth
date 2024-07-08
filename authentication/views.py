@@ -10,7 +10,7 @@ from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from authentication.serializers import UserSerializer, VerifyOtpSerializer
 from authentication.models import User
 from django.http import FileResponse
-from authentication.permissions import NotAuthenticated, TwoFactorEnablePermission, TwoFactorIsDisabled
+from authentication.permissions import NotAuthenticated, TwoFactorEnablePermission, TwoFactorRequired
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -55,7 +55,7 @@ class UserViewSet(viewsets.ModelViewSet):
         methods=["POST"],
         url_path="verify_otp",
         serializer_class=VerifyOtpSerializer,
-        permission_classes=[NotAuthenticated, TwoFactorIsDisabled],
+        permission_classes=[NotAuthenticated, TwoFactorRequired],
     )
     def verify_otp(self, request):
         serializer = VerifyOtpSerializer(data=request.data)

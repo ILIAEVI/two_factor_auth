@@ -23,7 +23,7 @@ class TwoFactorEnablePermission(permissions.BasePermission):
         return True
 
 
-class TwoFactorIsDisabled(permissions.BasePermission):
+class TwoFactorRequired(permissions.BasePermission):
     def has_permission(self, request, view):
         email = request.data['email']
 
