@@ -40,6 +40,7 @@ class User(AbstractUser):
     username = None
     otp_secret = models.CharField(max_length=255, blank=True)
     is_2fa_enabled = models.BooleanField(default=False)
+    backup_code = models.TextField(blank=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
