@@ -1,7 +1,7 @@
 from rest_framework import permissions
 from rest_framework.exceptions import PermissionDenied
 
-from authentication.models import User
+from authentication.models import User, SetupToken
 
 
 class NotAuthenticated(permissions.BasePermission):
@@ -10,17 +10,21 @@ class NotAuthenticated(permissions.BasePermission):
         return not request.user or not request.user.is_authenticated
 
 
-class TwoFactorEnablePermission(permissions.BasePermission):
+class SetupTokenRequired(permissions.BasePermission):
 
     def has_permission(self, request, view):
-        user = request.user
-        if view.action == 'enable_2fa':
-            return True
-
-        if not user.is_authenticated and not user.is_2fa_enabled:
+        setup_token = request.headers.get('setup-token')
+        if not setup_token:
             return False
 
-        return True
+        try:
+            token_object = SetupToken.objects.get(token=setup_token)
+            if token_object.token == setup_token and token_object.is_valid():
+                return True
+        except SetupToken.DoesNotExist:
+            return False
+
+        return False
 
 
 class TwoFactorRequired(permissions.BasePermission):

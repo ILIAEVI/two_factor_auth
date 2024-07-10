@@ -2,6 +2,7 @@ from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import validate_email
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -40,10 +41,25 @@ class User(AbstractUser):
     username = None
     otp_secret = models.CharField(max_length=255, blank=True)
     is_2fa_enabled = models.BooleanField(default=False)
-    backup_code = models.TextField(blank=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
 
     objects = UserManager()
 
+
+class SetupToken(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    token = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_valid(self):
+        return (timezone.now() - self.created_at).total_seconds() < 900
+
+
+class BackupCode(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    code = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    active = models.BooleanField(default=True)

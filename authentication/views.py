@@ -1,5 +1,4 @@
-import string
-
+import secrets
 import pyotp
 from django.contrib.auth import authenticate
 from rest_framework import status, viewsets, permissions
@@ -7,8 +6,8 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from authentication.serializers import UserSerializer, VerifyOtpSerializer, VerifyTwoFactorSerializer
-from authentication.models import User
-from authentication.permissions import NotAuthenticated, TwoFactorEnablePermission, TwoFactorRequired
+from authentication.models import User, SetupToken, BackupCode
+from authentication.permissions import NotAuthenticated, TwoFactorRequired, SetupTokenRequired
 from django.utils.crypto import get_random_string
 
 
@@ -34,11 +33,10 @@ class UserViewSet(viewsets.ModelViewSet):
 
         if user:
             if not user.is_2fa_enabled:
-                refresh = RefreshToken.for_user(user)
-                access_token = AccessToken.for_user(user)
+                setup_token = secrets.token_urlsafe(32)
+                SetupToken.objects.create(user=user, token=setup_token)
                 return Response({
-                    'refresh': str(refresh),
-                    'access': str(access_token),
+                    'setup-token': setup_token,
                     'detail': 'Please Enable 2FA'
                 }, status.HTTP_200_OK)
             else:
@@ -93,63 +91,99 @@ class UserViewSet(viewsets.ModelViewSet):
         detail=False,
         methods=["POST"],
         url_path="enable_2fa",
-        permission_classes=[TwoFactorEnablePermission],
+        permission_classes=[SetupTokenRequired],
     )
     def enable_2fa(self, request):
-        user = request.user
-        if user.is_2fa_enabled:
-            return Response({"error": "2FA is already enabled"}, status=status.HTTP_400_BAD_REQUEST)
+        setup_token = request.headers.get('setup-token')
 
-        user.otp_secret = pyotp.random_base32()
-        user.save()
+        try:
+            token_object = SetupToken.objects.get(token=setup_token)
+        except SetupToken.DoesNotExist:
+            return Response({'detail': 'Setup token does not exist'}, status=status.HTTP_404_NOT_FOUND)
 
-        totp = pyotp.TOTP(user.otp_secret)
-        provisioning_uri = totp.provisioning_uri(user.email, issuer_name="Secured App")
-        return Response({
-            'provisioning_uri': provisioning_uri,
-            'detail': 'Please verify OTP to complete 2FA setup',
-        }, status=status.HTTP_200_OK)
+        if token_object.is_valid():
+            user = token_object.user
+            if user.is_2fa_enabled:
+                return Response({"error": "2FA is already enabled"}, status=status.HTTP_400_BAD_REQUEST)
+
+            user.otp_secret = pyotp.random_base32()
+            user.save()
+
+            totp = pyotp.TOTP(user.otp_secret)
+            provisioning_uri = totp.provisioning_uri(user.email, issuer_name="Secured App")
+            return Response({
+                'provisioning_uri': provisioning_uri,
+                'detail': 'Please verify OTP to complete 2FA setup',
+                'setup-token': setup_token,
+            }, status=status.HTTP_200_OK)
+        else:
+            token_object.delete()
+            return Response({'detail': 'Setup token is expired, try again'}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(
         detail=False,
         methods=["POST"],
         url_path="verify_enabled_2fa",
-        permission_classes=[TwoFactorEnablePermission],
+        permission_classes=[SetupTokenRequired],
         serializer_class=VerifyTwoFactorSerializer,
     )
     def verify_enabled_2fa(self, request):
-        user = request.user
-        serializer = VerifyTwoFactorSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        entered_otp = serializer.validated_data["otp"]
+        setup_token = request.headers.get('setup-token')
 
-        totp = pyotp.TOTP(user.otp_secret)
-        if totp.verify(entered_otp):
-            user.is_2fa_enabled = True
-            user.save()
-            return Response({
-                'detail': '2FA enabled successfully',
-            }, status=status.HTTP_200_OK)
+        try:
+            token_object = SetupToken.objects.get(token=setup_token)
+        except SetupToken.DoesNotExist:
+            return Response({'detail': 'Setup Token does not exist'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = token_object.user
+        if token_object.is_valid():
+            serializer = VerifyTwoFactorSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            entered_otp = serializer.validated_data["otp"]
+
+            totp = pyotp.TOTP(user.otp_secret)
+            if totp.verify(entered_otp):
+                user.is_2fa_enabled = True
+                user.save()
+                refresh = RefreshToken.for_user(user)
+                access_token = AccessToken.for_user(user)
+                return Response({
+                    'detail': '2FA enabled successfully',
+                    'refresh': str(refresh),
+                    'access': str(access_token)
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({'error': 'Invalid OTP. Please try again.'}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            return Response({'error': 'Invalid OTP. Please try again.'}, status=status.HTTP_400_BAD_REQUEST)
+            token_object.delete()
+            return Response({'detail': 'Setup token is expired, try again'}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(
         detail=False,
         methods=["GET"],
         url_path="backup_2fa_code",
-        permission_classes=[TwoFactorEnablePermission],
+        permission_classes=[SetupTokenRequired],
     )
     def backup_2fa_code(self, request):
-        user = request.user
-        backup_codes = []
+        setup_token = request.headers.get('setup-token')
 
-        for _ in range(6):
-            code = get_random_string(length=6, allowed_chars='0123456789')
-            backup_codes.append(code)
+        try:
+            token_object = SetupToken.objects.get(token=setup_token)
+        except SetupToken.DoesNotExist:
+            return Response({'detail': 'Invalid setup token'}, status=status.HTTP_400_BAD_REQUEST)
 
-        user.backup_code = ','.join(backup_codes)
-        user.save()
-        return Response({'backup_codes': backup_codes}, status=status.HTTP_200_OK)
+        user = token_object.user
+        if token_object.is_valid():
+            backup_codes = []
+            for _ in range(6):
+                code = get_random_string(length=6, allowed_chars='0123456789')
+                BackupCode.objects.create(user=user, code=code)
+                backup_codes.append(code)
+
+            return Response({'backup_codes': backup_codes}, status=status.HTTP_200_OK)
+        else:
+            token_object.delete()
+            return Response({'detail': 'setup token is expired'}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(
         detail=False,
@@ -165,10 +199,3 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({'provisioning_uri': provisioning_uri}, status=status.HTTP_200_OK)
         else:
             return Response({'error': '2fa is not enabled'}, status=status.HTTP_400_BAD_REQUEST)
-
-
-
-
-
-
-

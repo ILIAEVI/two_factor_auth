@@ -11,13 +11,6 @@ class CustomJWTAuthentication(JWTAuthentication):
 
         user, token = result
         if user is not None:
-            if self.requires_2fa(request) and not user.is_2fa_enabled:
+            if not user.is_2fa_enabled:
                 raise AuthenticationFailed('2FA is not enabled')
         return user, token
-
-    @staticmethod
-    def requires_2fa(request):
-        path = request.path
-        if path.endswith('/enable_2fa/'):
-            return False
-        return True
