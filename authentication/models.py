@@ -66,7 +66,7 @@ class BackupCode(models.Model):
 
     @property
     def is_active(self):
-        return self.expires_at < timezone.now()
+        return self.expires_at > timezone.now()
 
     def save(self, *args, **kwargs):
         if not self.pk:
