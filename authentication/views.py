@@ -64,6 +64,7 @@ class UserViewSet(viewsets.ModelViewSet):
             user = authenticate(request, email=email, password=password)
 
             totp = pyotp.TOTP(user.otp_secret)
+
             if totp.verify(entered_otp):
                 refresh = RefreshToken.for_user(user)
                 access_token = AccessToken.for_user(user)
@@ -71,17 +72,20 @@ class UserViewSet(viewsets.ModelViewSet):
                     'refresh': str(refresh),
                     'access': str(access_token)
                 }, status.HTTP_200_OK)
-            elif entered_otp in user.backup_code.split(','):
-                backup_codes = user.backup_code.split(',').remove(entered_otp)
-                user.backup_code = ','.join(backup_codes)
-                user.save()
-                refresh = RefreshToken.for_user(user)
-                access_token = AccessToken.for_user(user)
-                return Response({
-                    'refresh': str(refresh),
-                    'access': str(access_token),
-                    'detail': 'Logged in successfully with backup code'
-                }, status=status.HTTP_200_OK)
+            elif BackupCode.objects.filter(user=user, code=entered_otp).exists():
+                backup_code = BackupCode.objects.get(user=user, code=entered_otp)
+                if backup_code and backup_code.is_active:
+                    backup_code.active = False
+                    backup_code.save()
+                    refresh = RefreshToken.for_user(user)
+                    access_token = AccessToken.for_user(user)
+                    return Response({
+                        'refresh': str(refresh),
+                        'access': str(access_token),
+                        'detail': 'Logged in successfully with backup code'
+                    }, status=status.HTTP_200_OK)
+                else:
+                    return Response({'detail': 'Backup code is not active'}, status=status.HTTP_400_BAD_REQUEST)
             else:
                 return Response({'detail': 'Invalid OTP'}, status.HTTP_400_BAD_REQUEST)
         except User.DoesNotExist:

@@ -63,3 +63,12 @@ class BackupCode(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     active = models.BooleanField(default=True)
+
+    @property
+    def is_active(self):
+        return self.expires_at < timezone.now()
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            self.expires_at = timezone.now() + timezone.timedelta(days=365)
+        super().save(*args, **kwargs)
